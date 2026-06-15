@@ -62,14 +62,12 @@ scene.add(shadowPlane);
 
 let activeGem = null;
 
-async function switchGem(
-  gemData
-)
+async function switchGem(gemData)
 {
-  const result =
-    await loadGem(
+  const result = await loadGem(
       scene,
-      gemData.file
+      gemData.file,
+       gemData.id
     );
 
   activeGem =
