@@ -65,30 +65,26 @@ let activeGem = null;
 async function switchGem(gemData)
 {
   const result = await loadGem(
-      scene,
-      gemData.file,
-       gemData.id
-    );
+    scene,
+    gemData.file,
+    gemData.id
+  );
 
-  activeGem =
-    result.model;
-    setShadowTexture(
-  shadowPlane,
-  gemData.shadow
-);
-shadowPlane.scale.set(
-  4.5,
-  2.5,
-  3.5
-);
-  shadowPlane.position.y =
-    -(result.height / 2) - 0.5;
-    shadowPlane.position.z = 0;
-    shadowPlane.position.x = 0;
+  activeGem = result.model;
+
+  setShadowTexture(
+    shadowPlane,
+    gemData.shadow
+  );
+
+  shadowPlane.scale.set(4.5, 2.5, 3.5);
+  shadowPlane.position.y = -(result.height / 2) - 0.5;
+  shadowPlane.position.z = 0;
+  shadowPlane.position.x = 0;
 }
 
 GEMS.forEach(
-  (gem,index)=>
+  (gem, index) =>
 {
   const card =
     document.createElement("div");
@@ -103,42 +99,28 @@ GEMS.forEach(
 
   card.addEventListener(
     "click",
-    async ()=>{
+    async () => {
 
       document
-        .querySelectorAll(
-          ".gem-card"
-        )
-        .forEach(c=>
-          c.classList.remove(
-            "active"
-          )
+        .querySelectorAll(".gem-card")
+        .forEach(c =>
+          c.classList.remove("active")
         );
 
-      card.classList.add(
-        "active"
-      );
+      card.classList.add("active");
 
-      await switchGem(
-        gem
-      );
-
+      await switchGem(gem);
     }
   );
 
-  presetList.appendChild(
-    card
-  );
+  presetList.appendChild(card);
 });
 
-await switchGem(
-  GEMS[0]
-);
+await switchGem(GEMS[0]);
 
 window.addEventListener(
   "resize",
-  ()=>{
-
+  () => {
     camera.aspect =
       viewport.clientWidth /
       viewport.clientHeight;
@@ -149,31 +131,22 @@ window.addEventListener(
       viewport.clientWidth,
       viewport.clientHeight
     );
-
   }
 );
 
 function animate()
 {
-  requestAnimationFrame(
-    animate
-  );
+  requestAnimationFrame(animate);
 
-  if(activeGem)
-{
-  activeGem.rotation.y +=
-    0.004;
-
-  shadowPlane.rotation.z =
-  activeGem.rotation.y - Math.PI;
-}
+  if (activeGem) {
+    activeGem.rotation.y += 0.004;
+    shadowPlane.rotation.z =
+      activeGem.rotation.y - Math.PI;
+  }
 
   controls.update();
 
-  renderer.render(
-    scene,
-    camera
-  );
+  renderer.render(scene, camera);
 }
 
 animate();

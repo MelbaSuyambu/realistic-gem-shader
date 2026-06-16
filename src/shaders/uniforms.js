@@ -17,7 +17,7 @@ export const gemUniforms = {
 
   uIOR: { value: 2.42 },
 
-  uDispersion: { value: 0.044 },
+  uDispersion: { value: 0.15 },
 
   uAbsorptionColor: { value: new THREE.Color(0.05, 0.02, 0.01) },
 
@@ -25,7 +25,7 @@ export const gemUniforms = {
   
   uReflectivity: { value: 0.95 },
 
-  uTransmission: { value: 0.95 },
+  uTransmission: { value: 1.0 },
 
   uEnvIntensity: { value: 1.2 },
 
