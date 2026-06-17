@@ -5,7 +5,7 @@ export function createLights(scene)
   const ambient =
     new THREE.AmbientLight(
       0xffffff,
-      1.0
+      0.2
     );
 
   scene.add(ambient);
@@ -13,7 +13,7 @@ export function createLights(scene)
   const keyLight =
     new THREE.DirectionalLight(
       0xffffff,
-      4
+      0.8
     );
 
   keyLight.position.set(
