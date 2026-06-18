@@ -35,6 +35,8 @@ const FRAG_UNIFORMS = /* glsl */`
   uniform float uNormalSharpness;
   uniform float uRGBBoost;
   uniform float uRefractionRatio;
+  // NEWLY ADDED: uEnvSaturation for Option 1
+  uniform float uEnvSaturation;
 `;
 
 const FRAG_HELPERS = /* glsl */`
@@ -50,8 +52,15 @@ const FRAG_HELPERS = /* glsl */`
     return exp(-absorptionColor * strength * depth * 8.0);
   }
 
+  // UPDATED: Three.js r184 processes scene.environment through PMREMGenerator and exposes it
+  //   via ENVMAP_TYPE_CUBE_UV. textureCubeUV() is the built-in function for sampling it.
   vec3 sampleEnv(vec3 dir) {
-    #ifdef ENVMAP_TYPE_CUBE
+    #ifdef ENVMAP_TYPE_CUBE_UV
+      return textureCubeUV(envMap, dir, 0.0).rgb;  // UPDATED: correct Three.js PMREM path
+    #elif defined(ENVMAP_TYPE_EQUIREC)
+      vec2 uv = vec2(atan(dir.z, dir.x) * 0.1591549 + 0.5, asin(clamp(dir.y, -1.0, 1.0)) * 0.3183099 + 0.5);
+      return texture2D(envMapEquirect, uv).rgb;
+    #elif defined(ENVMAP_TYPE_CUBE)
       return textureCube(envMap, vec3(-dir.x, dir.yz)).rgb;
     #else
       return vec3(0.9);
@@ -84,16 +93,19 @@ const FRAG_GEM_LOGIC = /* glsl */`
   float facetFresnel = clamp(schlickFresnel(viewDir, flatN, uFresnelPower), 0.0, 1.0);
   float edgeMask     = pow(facetFresnel, 2.0);
 
-  // Environment reflection 
-  vec3 reflectDir   = reflect(incident, shadingN);
-  vec3 reflectedEnv = sampleEnv(reflectDir);
+  // Environment reflection (Option 1: desaturate using uEnvSaturation)
+  vec3 reflectDir      = reflect(incident, shadingN);
+  vec3 reflectedEnvRaw = sampleEnv(reflectDir);
+  float reflLum        = dot(reflectedEnvRaw, vec3(0.299, 0.587, 0.114));
+  vec3 reflectedEnv    = mix(vec3(reflLum), reflectedEnvRaw, uEnvSaturation);
 
   // Refraction with RGB dispersion split
   float baseIOR = 1.0 / uRefractionRatio;
   vec3 refN = faceforward(shadingN, incident, shadingN);
-vec3 refR = refract(incident, refN, 1.0 / (baseIOR + uDispersion * 3.0));
+// UPDATED (Change 1): multiplier 3.0 → 8.0 bends R and B channels further apart for visible rainbow separation on facet edges
+vec3 refR = refract(incident, refN, 1.0 / (baseIOR + uDispersion * 8.0));  // UPDATED
 vec3 refG = refract(incident, refN, 1.0 / baseIOR);
-vec3 refB = refract(incident, refN, 1.0 / max(baseIOR - uDispersion * 3.0, 0.1));
+vec3 refB = refract(incident, refN, 1.0 / max(baseIOR - uDispersion * 8.0, 0.1));  // UPDATED
 
   // Handle total internal reflection
   if(length(refR) < 0.1) refR = reflectDir;
@@ -105,6 +117,9 @@ vec3 refB = refract(incident, refN, 1.0 / max(baseIOR - uDispersion * 3.0, 0.1))
     sampleEnv(refG).g,
     sampleEnv(refB).b
   );
+  // Option 1: desaturate the combined refractedEnv to prevent environment colors bleeding (like yellow-green)
+  float refrLum     = dot(refractedEnv, vec3(0.299, 0.587, 0.114));
+  refractedEnv      = mix(vec3(refrLum), refractedEnv, uEnvSaturation);
 
   // Beer-Lambert absorption
   float pathDepth     = 1.0 - clamp(dot(shadingN, viewDir), 0.0, 1.0);
@@ -122,23 +137,28 @@ vec3 refB = refract(incident, refN, 1.0 / max(baseIOR - uDispersion * 3.0, 0.1))
   float rAngle  = dot(refR, refB);
   float hue     = fract(rAngle * 3.0 + dot(flatN, vec3(0.3, 0.7, 0.2)));
   vec3  fireColor = hsv2rgb(vec3(hue, 1.0, 1.0));
-  float fireMask  = causticBrightness * (0.3 + 0.7 * edgeMask) * uDispersion * 15.0;
+  // Option 1 Tuning: reduce fire on flat face-on facets (table) using a stronger edgeMask bias, keeping it rich on crown edges
+  float fireMask  = causticBrightness * (0.05 + 0.95 * edgeMask) * uDispersion * 15.0;
   vec3  fire      = fireColor * fireMask;
 
   // Base gem body colour 
   float centerDot  = clamp(dot(shadingN, viewDir), 0.0, 1.0);
-  float depthShade = mix(0.08, 0.7, pow(1.0 - centerDot, 1.2));
+  // UPDATED (Change C): range (0.08,0.7) → (0.0,0.9), gamma 1.2→1.0 — lets dark facets go fully black, crown stays bright
+  float depthShade = mix(0.0, 0.9, pow(1.0 - centerDot, 1.0));  // UPDATED
   float facetAngle  = abs(dot(flatN, viewDir));  // abs() = both front AND back faces
-float facetShade  = mix(0.5, 1.0, facetAngle); // higher minimum = no dark patches
+// UPDATED (Change 2): min 0.5 → 0.0 so dark facets can go fully black; pow(0.6) gentle gamma keeps mid-bright facets lit
+float facetShade  = mix(0.0, 1.0, pow(facetAngle, 0.6));  // UPDATED
 vec3  bodyColor   = uGemColor * depthShade * facetShade;
 
   // Tinted env samples 
-  vec3 tintedRefraction = refractedEnv * uGemColor * uEnvIntensity * 2.2;
+  // UPDATED (Change B): multiplier 2.2 → 3.0 so env light punches through colored gems visibly
+  vec3 tintedRefraction = refractedEnv * uGemColor * uEnvIntensity * 3.0;  // UPDATED
   vec3 tintedReflection = reflectedEnv * mix(uGemColor * 0.6, vec3(1.0), 0.5) * uEnvIntensity;
 
   // Combine all layers 
   vec3 gemColor = bodyColor;
-  gemColor = mix(gemColor, tintedRefraction, 0.75);
+  // UPDATED (Change A): 0.75 → 0.60 — stops env refraction drowning body color and causing grey wash
+  gemColor = mix(gemColor, tintedRefraction, 0.60);  // UPDATED
   gemColor = mix(gemColor, tintedReflection, fresnel * uReflectivity * 0.9);
   gemColor += fire;
   gemColor += vec3(pow(causticBrightness, 2.0) * 0.8);
@@ -164,45 +184,48 @@ export function createGemMaterial(scene, gemId = "diamond") {
   if (gem?.shader) {
     const p = gem.shader;
     if (p.uIOR !== undefined) {
-      gemUniforms.uIOR.value             = p.uIOR;
+      gemUniforms.uIOR.value = p.uIOR;
       gemUniforms.uRefractionRatio.value = 1.0 / p.uIOR;
     }
-    if (p.uGemColor)        gemUniforms.uGemColor.value.set(...p.uGemColor);
+    if (p.uGemColor) gemUniforms.uGemColor.value.set(...p.uGemColor);
     if (p.uAbsorptionColor) gemUniforms.uAbsorptionColor.value.set(...p.uAbsorptionColor);
-    ["uDispersion","uFresnelPower","uAbsorptionStrength","uReflectivity",
-     "uTransmission","uEnvIntensity","uNormalSharpness","uRGBBoost"]
+    ["uDispersion", "uFresnelPower", "uAbsorptionStrength", "uReflectivity",
+      "uTransmission", "uEnvIntensity", "uNormalSharpness", "uRGBBoost", "uEnvSaturation"]
       .forEach(k => { if (p[k] !== undefined) gemUniforms[k].value = p[k]; });
+    console.log("[gemShader] Applied presets for:", gemId, "uEnvSaturation is:", gemUniforms.uEnvSaturation.value);
   }
 
   const material = new THREE.MeshPhysicalMaterial({
-    color:           new THREE.Color(0, 0, 0),
-    metalness:       0.0,
-    roughness:       0.0,
-    transmission:    0.0,
-    ior:             2.42,
-    reflectivity:    0.95,
+    color: new THREE.Color(0, 0, 0),
+    metalness: 0.0,
+    roughness: 0.0,
+    transmission: 0.0,
+    ior: 2.42,
+    reflectivity: 0.95,
     envMapIntensity: 3.0,
-    transparent:     false,
-    depthWrite:      true,
-    side:            THREE.DoubleSide,
-    envMap:          scene ? scene.environment : null,
+    transparent: false,
+    depthWrite: true,
+    side: THREE.DoubleSide,
+    envMap: scene ? scene.environment : null,
   });
 
   material.onBeforeCompile = (shader) => {
     // Give this shader its OWN copy of all uniform values
     // (not a reference to gemUniforms — that's the bug we're fixing)
-    shader.uniforms.uGemColor           = gemUniforms.uGemColor;
-    shader.uniforms.uIOR                = gemUniforms.uIOR;
-    shader.uniforms.uDispersion         = gemUniforms.uDispersion;
-    shader.uniforms.uAbsorptionColor    = gemUniforms.uAbsorptionColor;
+    shader.uniforms.uGemColor = gemUniforms.uGemColor;
+    shader.uniforms.uIOR = gemUniforms.uIOR;
+    shader.uniforms.uDispersion = gemUniforms.uDispersion;
+    shader.uniforms.uAbsorptionColor = gemUniforms.uAbsorptionColor;
     shader.uniforms.uAbsorptionStrength = gemUniforms.uAbsorptionStrength;
-    shader.uniforms.uReflectivity       = gemUniforms.uReflectivity;
-    shader.uniforms.uTransmission       = gemUniforms.uTransmission;
-    shader.uniforms.uEnvIntensity       = gemUniforms.uEnvIntensity;
-    shader.uniforms.uFresnelPower       = gemUniforms.uFresnelPower;
-    shader.uniforms.uNormalSharpness    = gemUniforms.uNormalSharpness;
-    shader.uniforms.uRGBBoost           = gemUniforms.uRGBBoost;
-    shader.uniforms.uRefractionRatio    = gemUniforms.uRefractionRatio;
+    shader.uniforms.uReflectivity = gemUniforms.uReflectivity;
+    shader.uniforms.uTransmission = gemUniforms.uTransmission;
+    shader.uniforms.uEnvIntensity = gemUniforms.uEnvIntensity;
+    shader.uniforms.uFresnelPower = gemUniforms.uFresnelPower;
+    shader.uniforms.uNormalSharpness = gemUniforms.uNormalSharpness;
+    shader.uniforms.uRGBBoost = gemUniforms.uRGBBoost;
+    shader.uniforms.uRefractionRatio = gemUniforms.uRefractionRatio;
+    // NEWLY ADDED: uEnvSaturation for Option 1
+    shader.uniforms.uEnvSaturation = gemUniforms.uEnvSaturation;
 
 
     shader.vertexShader = shader.vertexShader.replace(
@@ -223,11 +246,12 @@ export function createGemMaterial(scene, gemId = "diamond") {
       `${FRAG_HELPERS}\nvoid main() {`
     );
     shader.fragmentShader = shader.fragmentShader.replace(
-  "#include <tonemapping_fragment>",
-  `${FRAG_GEM_LOGIC}\n#include <tonemapping_fragment>`
-);
+      "#include <tonemapping_fragment>",
+      `${FRAG_GEM_LOGIC}\n#include <tonemapping_fragment>`
+    );
 
     material.userData.shader = shader;
+    _compiledShaders.push(shader); // NEWLY ADDED: track shaders for UI updates
   };
 
   material.customProgramCacheKey = () => "gem-shader-" + Math.random();
@@ -252,14 +276,14 @@ export function applyPreset(gemId) {
   const p = gem.shader;
 
   if (p.uIOR !== undefined) {
-    gemUniforms.uIOR.value             = p.uIOR;
+    gemUniforms.uIOR.value = p.uIOR;
     gemUniforms.uRefractionRatio.value = 1.0 / p.uIOR;
   }
-  if (p.uGemColor)        gemUniforms.uGemColor.value.set(...p.uGemColor);
+  if (p.uGemColor) gemUniforms.uGemColor.value.set(...p.uGemColor);
   if (p.uAbsorptionColor) gemUniforms.uAbsorptionColor.value.set(...p.uAbsorptionColor);
 
-  ["uDispersion","uFresnelPower","uAbsorptionStrength",
-   "uReflectivity","uTransmission","uEnvIntensity","uNormalSharpness","uRGBBoost"]
+  ["uDispersion", "uFresnelPower", "uAbsorptionStrength",
+    "uReflectivity", "uTransmission", "uEnvIntensity", "uNormalSharpness", "uRGBBoost", "uEnvSaturation"]
     .forEach(k => { if (p[k] !== undefined) gemUniforms[k].value = p[k]; });
 }
 

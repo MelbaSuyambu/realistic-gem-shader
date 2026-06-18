@@ -38,4 +38,7 @@ export const gemUniforms = {
   uRGBBoost: { value: 1.05 },
 
   uRefractionRatio: { value: 1.0 / 2.42 },
+
+  // NEWLY ADDED: saturation slider control for the HDR environment map sampling (Option 1)
+  uEnvSaturation: { value: 1.0 },
 };

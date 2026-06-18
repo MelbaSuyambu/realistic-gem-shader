@@ -5,7 +5,7 @@ import { createGemMaterial, clearShaderRegistry } from "../shaders/gemShader.js"
 const loader = new GLTFLoader();
 let currentGem = null;
 
-export async function loadGem(scene, file, gemId) {
+export async function loadGem(scene, file, gemId, useCustomShader = true) {
 
   if (currentGem) {
     scene.remove(currentGem);
@@ -24,6 +24,18 @@ export async function loadGem(scene, file, gemId) {
   const scale      = targetSize / maxAxis;
   model.scale.setScalar(scale);
 
+  const standardMat = useCustomShader ? null : new THREE.MeshPhysicalMaterial({
+    color: 0xaaaaaa,
+    metalness: 0.0,
+    roughness: 0.05,
+    transmission: 0.95,
+    ior: 2.42,
+    thickness: 1.0,
+    transparent: true,
+    envMap: scene.environment,
+    envMapIntensity: 1.5,
+  });
+
   model.traverse((child) => {
     if (child.isMesh) {
       child.castShadow    = true;
@@ -36,7 +48,10 @@ export async function loadGem(scene, file, gemId) {
           child.material.dispose();
         }
       }
-      child.material = createGemMaterial(scene, gemId);
+      
+      const gemMaterial = createGemMaterial(scene, gemId);
+      child.userData.customMaterial = gemMaterial;
+      child.material = useCustomShader ? gemMaterial : standardMat;
     }
   });
 
